@@ -341,6 +341,38 @@ class TropicalPolynomial:
         out = max(out)
 
         return out
+    
+    def minimize(self):
+        def split(u, v, points):
+            # return points on left side of UV
+            return [p for p in points if np.any(np.cross(p - u, v - u) < 0)]
+
+        def extend(u, v, points):
+            if not points:
+                return []
+
+            # find furthest point W, and split search to WV, UW
+            w = min(points, key=lambda p: np.sum(abs(np.cross(p - u, v - u))))
+            p1, p2 = split(w, v, points), split(u, w, points)
+            return extend(w, v, p1) + [w] + extend(u, w, p2)
+
+        def convex_hull(points):
+            # find two hull points, U, V, and split to left and right search
+            u = [None]
+            v = [None]
+            i=0
+            while u[i]==v[i]:
+                u = min(points, key=lambda p: p[i])
+                v = max(points, key=lambda p: p[i])
+                i += 1
+            left, right = split(u, v, points), split(v, u, points)
+
+            # find convex hull on each side
+            return [list(i) for i in [v] + extend(u, v, left) + [u] + extend(v, u, right)]
+                
+        new_monom = convex_hull(np.array([[i.val for i in mon.coef] for mon in self.monoms.values()]))
+        
+        return TropicalPolynomial(new_monom)
 
 
 class PolyNet(nn.Module):
