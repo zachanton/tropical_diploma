@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 import string
+from scipy.spatial import ConvexHull
 
 
 class Tropical:
@@ -183,7 +184,7 @@ class TropicalMonomial:
                     s = '{}'.format(v)
 
                 else:
-                    s = '{}^{}'.format(v, coe)
+                    s = '{}^{}'.format(v, int(coe.val))
 
             out.append(s)
 
@@ -326,6 +327,8 @@ class TropicalPolynomial:
             s = str(self.monoms[pwr])
 
             out.append(s)
+            
+        out = sorted(out, key=lambda x: x[::-1])
 
         out = ' ⨁ '.join(out)
 
@@ -343,35 +346,22 @@ class TropicalPolynomial:
         return out
     
     def minimize(self):
-        def split(u, v, points):
-            # return points on left side of UV
-            return [p for p in points if np.any(np.cross(p - u, v - u) < 0)]
+        def filter_hull(points,hull):
+            ch = points[hull.vertices]
+            ind = np.arange(len(ch))
+            new_ind = set()
+            for i in range(1,len(points[0])):
+                #+- down points
+                mi,ma = min(ch,key=lambda x:(x[i],x[0])),max(ch,key=lambda x:(x[i],-x[0]))
+                good_points = [np.cross(p[[i,0]] - ma[[i,0]], ma[[i,0]] - mi[[i,0]])<=0 for p in ch]
+                new_ind.update(ind[good_points])
+            new_vertices = hull.vertices[list(new_ind)]
+            new_ch = ch[list(new_ind)]
+            return sorted(new_ch.tolist())
+        pts = np.array([[i.val for i in mon.coef] for mon in self.monoms.values()])
+        hull = ConvexHull(pts,qhull_options='Qa Qw')
 
-        def extend(u, v, points):
-            if not points:
-                return []
-
-            # find furthest point W, and split search to WV, UW
-            w = min(points, key=lambda p: np.sum(abs(np.cross(p - u, v - u))))
-            p1, p2 = split(w, v, points), split(u, w, points)
-            return extend(w, v, p1) + [w] + extend(u, w, p2)
-
-        def convex_hull(points):
-            # find two hull points, U, V, and split to left and right search
-            u = [None]
-            v = [None]
-            i=0
-            while u[i]==v[i]:
-                u = min(points, key=lambda p: p[i])
-                v = max(points, key=lambda p: p[i])
-                i += 1
-            left, right = split(u, v, points), split(v, u, points)
-
-            # find convex hull on each side
-            return [list(i) for i in [v] + extend(u, v, left) + [u] + extend(v, u, right)]
-                
-        new_monom = convex_hull(np.array([[i.val for i in mon.coef] for mon in self.monoms.values()]))
-        
+        new_monom = filter_hull(pts,hull)
         return TropicalPolynomial(new_monom)
 
 
