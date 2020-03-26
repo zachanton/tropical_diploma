@@ -1,4 +1,5 @@
 import numpy as np
+np.seterr(divide='ignore', invalid='ignore')
 import torch
 from torch import nn
 import string
@@ -344,37 +345,42 @@ class TropicalPolynomial:
 
         return out
     
-    def minimize(self):
+    def minimize(self, tolerance=1e-12):
         def in_hull(p, del_hull):
             return del_hull.find_simplex(p)>=0
-
-        def hit(U,hull, del_hull):
-            U0 = np.eye(len(U))[-1]
+        
+        def points_in_hull(points, hull):
             eq=hull.equations.T
             V,b=eq[:-1].T,eq[-1]
-            num = -b - np.dot(V,U)
-            den = np.dot(V,U0)
-            alpha = num[den!=0]/den[den!=0]
-            alpha = alpha[(~np.isnan(alpha))&(~np.isinf(alpha))&(alpha>1)]
-            if len(alpha)==0:
-                return True
-            return ~in_hull(U + np.min(alpha)*U0,del_hull)
+            flag = np.prod(np.dot(V,points.T)+b[:,None]<= tolerance,axis=0)
+            return flag.astype(bool)
+
+        def hit(U, hull):
+            U0 = np.ones(U.shape)
+            U0[:,:-1] *= 0
+            eq=hull.equations.T
+            V,b=eq[:-1].T,eq[-1]
+            num = -(b[:,None] + np.dot(V,U.T))
+            num[np.isclose(num,0)] *= 0
+            den = np.dot(V,U0.T)
+            alpha = np.divide(num,den)
+            a = np.min(alpha,axis=0,initial=np.inf,where=(~np.isnan(alpha))&(~np.isinf(alpha))&(alpha>0))
+            U0[:,-1] = a
+            pa = U + U0
+            return pa
         
-        def filter_hull(points,hull,del_hull):
+        def filter_hull(points,hull):
             ch = points[hull.vertices]
-            hit_p = []
-            for p in ch:
-                hit_p.append(hit(p,hull,del_hull))
-            new_ch = ch[hit_p]
+            hit_p = hit(ch,hull)
+            in_hull = points_in_hull(hit_p, hull)
+            new_ch = ch[~in_hull]
             return sorted(new_ch.tolist())
         
         pts = np.array([[i.val for i in mon.coef] for mon in self.monoms.values()])
         if len(pts)<len(pts[0]):
             return self
-        hull = ConvexHull(pts,qhull_options='Qa QJ')
-        del_hull = Delaunay(pts)
-
-        new_monom = filter_hull(pts,hull,del_hull)
+        hull = ConvexHull(pts,qhull_options='Qa')
+        new_monom = filter_hull(pts,hull)
         return TropicalPolynomial(new_monom)
 
 
