@@ -4,6 +4,11 @@ import torch
 from torch import nn
 import string
 from scipy.spatial import ConvexHull, Delaunay
+import JuPyMake
+import matplotlib.pyplot as plt
+
+JuPyMake.InitializePolymake()
+JuPyMake.ExecuteCommand("application 'tropical';")
 
 class Tropical:
 
@@ -247,10 +252,10 @@ class TropicalPolynomial:
                     new_monom[x] = other.monoms[x]
         elif isinstance(other, TropicalMonomial):
             other = TropicalPolynomial([other.coef])
-            return self + other
+            return other + self
         elif isinstance(other, Tropical):
             other = TropicalPolynomial([[other.val] + [0 for _ in range(len(self[0].coef) - 1)]])
-            return self + other
+            return other + self
         return TropicalPolynomial(new_monom)
 
     def __radd__(self, other):
@@ -264,10 +269,10 @@ class TropicalPolynomial:
                     new_monom[x] = other.monoms[x]
         elif isinstance(other, TropicalMonomial):
             other = TropicalPolynomial([other.coef])
-            return self + other
+            return other + self
         elif isinstance(other, Tropical):
             other = TropicalPolynomial([[other.val] + [0 for _ in range(len(self[0].coef) - 1)]])
-            return self + other
+            return other + self
 
         return TropicalPolynomial(new_monom)
 
@@ -281,10 +286,10 @@ class TropicalPolynomial:
                     new_monom[key_z] = z
         elif isinstance(other, TropicalMonomial):
             other = TropicalPolynomial([other.coef])
-            return self * other
+            return other * self
         elif isinstance(other, Tropical):
             other = TropicalPolynomial([[other.val] + [0 for _ in range(len(self[0].coef) - 1)]])
-            return self * other
+            return other * self
 
         return TropicalPolynomial(new_monom)
 
@@ -293,15 +298,16 @@ class TropicalPolynomial:
         if isinstance(other, TropicalPolynomial):
             for x in other.monoms:
                 for y in self.monoms:
+                    print(x,y)
                     z = other.monoms[x] * self.monoms[y]
                     key_z = tuple([i.val for i in z.coef[1:]])
                     new_monom[key_z] = z
         elif isinstance(other, TropicalMonomial):
             other = TropicalPolynomial([other.coef])
-            return self * other
+            return other * self
         elif isinstance(other, Tropical):
             other = TropicalPolynomial([[other.val] + [0 for _ in range(len(self[0].coef) - 1)]])
-            return self * other
+            return other * self
 
         return TropicalPolynomial(new_monom)
 
@@ -345,7 +351,7 @@ class TropicalPolynomial:
 
         return out
     
-    def minimize(self, tolerance=1e-12):
+    def minimize_depr(self, tolerance=1e-12):
         def in_hull(p, del_hull):
             return del_hull.find_simplex(p)>=0
         
@@ -357,7 +363,7 @@ class TropicalPolynomial:
 
         def hit(U, hull):
             U0 = np.ones(U.shape)
-            U0[:,:-1] *= 0
+            U0[:,1:] *= 0
             eq=hull.equations.T
             V,b=eq[:-1].T,eq[-1]
             num = -(b[:,None] + np.dot(V,U.T))
@@ -365,7 +371,7 @@ class TropicalPolynomial:
             den = np.dot(V,U0.T)
             alpha = np.divide(num,den)
             a = np.min(alpha,axis=0,initial=np.inf,where=(~np.isnan(alpha))&(~np.isinf(alpha))&(alpha>0))
-            U0[:,-1] = a
+            U0[:,0] = a
             pa = U + U0
             return pa
         
@@ -380,8 +386,119 @@ class TropicalPolynomial:
         if len(pts)<len(pts[0]):
             return self
         hull = ConvexHull(pts,qhull_options='Qa')
+        
         new_monom = filter_hull(pts,hull)
         return TropicalPolynomial(new_monom)
+    
+    def minimize(self):
+        name = 'test'
+        JuPyMake.ExecuteCommand(f'${name} = toTropicalPolynomial("{self.poly_to_str()}");')
+
+        JuPyMake.ExecuteCommand(f'$V = new Hypersurface<Max>(POLYNOMIAL=>${name});')
+        JuPyMake.ExecuteCommand('$ds = $V->dual_subdivision();')
+        
+        pts = JuPyMake.ExecuteCommand('print $ds->POINTS;')[1]
+        pts = np.array([[int(j) for j in i.split()[1:]] for i in pts.split('\n')[:-1]])
+        
+        simp = JuPyMake.ExecuteCommand('print $ds->MAXIMAL_CELLS;')[1]
+        simp = np.array([[int(j) for j in i[1:-1].split()] for i in simp.split('\n')[:-1]])
+        
+        adj = JuPyMake.ExecuteCommand('for (my $i=0; $i<$ds->N_MAXIMAL_CELLS; ++$i)\
+                                    {print $ds->cell($i)->GRAPH->ADJACENCY, "\t" }')[1]
+        new_adj = []
+        for i in adj.split('\t')[:-1]:
+            new_a = []
+            for j in i.split('\n')[:-1]:
+                kek = j[1:-1].split()
+                if len(kek)>0:
+                    new_a.append([int(kek[0]),int(kek[-1])])
+                else:
+                    new_a.append([])
+            new_adj.append(new_a)
+
+        new_simp = []
+        for i, vv in enumerate(new_adj):
+            new_s = []
+
+            for j, v in enumerate(vv):
+                if len(v)>0:
+                    new_s.append([simp[i][j],simp[i][v[0]]])
+                    new_s.append([simp[i][j],simp[i][v[1]]])
+#             new_s = merge_intervals(new_s)
+            new_simp.append(new_s)
+            
+#         print(simp)
+#         print(new_simp)
+        used_points = np.unique([i for j in new_simp for i in j])
+        
+        return TropicalPolynomial([self.monoms[tuple(v)] for v in pts[used_points]])
+    
+
+    def poly_to_str(self):
+        def mon_to_str(monom):
+            return str(monom.coef[0].val) + '+' +''.join([str(int(v.val))+'*'+'x{}+'.format(i) for i,v in enumerate(monom.coef[1:])])[:-1]
+        
+        s = 'max('+','.join([mon_to_str(mon) for mon in self.monoms.values()]) + ')'
+        return s
+
+    def plot_dual_sub(self, color='blue', name='a'):
+        JuPyMake.ExecuteCommand(f'${name} = toTropicalPolynomial("{self.poly_to_str()}");')
+
+        JuPyMake.ExecuteCommand(f'$V = new Hypersurface<Max>(POLYNOMIAL=>${name});')
+        JuPyMake.ExecuteCommand('$ds = $V->dual_subdivision();')
+
+        pts = JuPyMake.ExecuteCommand('print $ds->POINTS;')[1]
+        pts = np.array([[int(j) for j in i.split()[1:]] for i in pts.split('\n')[:-1]])
+
+        plt.plot(pts[:,0], pts[:,1], 'o', color='black')
+
+        simp = JuPyMake.ExecuteCommand('print $ds->MAXIMAL_CELLS;')[1]
+        simp = np.array([[int(j) for j in i[1:-1].split()] for i in simp.split('\n')[:-1]])
+
+        adj = JuPyMake.ExecuteCommand('for (my $i=0; $i<$ds->N_MAXIMAL_CELLS; ++$i)\
+                                    {print $ds->cell($i)->GRAPH->ADJACENCY, "\t" }')[1]
+        new_adj = []
+        for i in adj.split('\t')[:-1]:
+            new_a = []
+            for j in i.split('\n')[:-1]:
+                kek = j[1:-1].split()
+                if len(kek)>0:
+                    new_a.append([int(kek[0]),int(kek[-1])])
+                else:
+                    new_a.append([])
+            new_adj.append(new_a)
+
+        new_simp = []
+        for i, vv in enumerate(new_adj):
+            new_s = []
+
+            for j, v in enumerate(vv):
+                if len(v)>0:
+                    new_s.append([simp[i][j],simp[i][v[0]]])
+                    new_s.append([simp[i][j],simp[i][v[1]]])
+            new_simp.append(new_s)            
+
+        for simplex in new_simp:
+            for v in simplex:
+                plt.plot(pts[v, 0], pts[v, 1], 'k-', color=color)
+                
+                
+                
+def merge_intervals(intervals):
+    intervals.sort(key=lambda x: x[0])
+
+    merged = []
+    for interval in intervals:
+        # if the list of merged intervals is empty or if the current
+        # interval does not overlap with the previous, simply append it.
+        if not merged or merged[-1][1] < interval[0]:
+            merged.append(interval)
+        else:
+        # otherwise, there is overlap, so we merge the current and previous
+        # intervals.
+            merged[-1][1] = max(merged[-1][1], interval[1])
+
+    return merged
 
 
 class PolyNet(nn.Module):
@@ -475,7 +592,7 @@ def convert_polynomial_to_net(poly):
             w = np.hstack([w, np.zeros((w.shape[0], 1))])
             w = np.hstack([w, np.zeros((w.shape[0], 1))])
             w[-1, -2] = 1
-            w[-1, -1] = 1
+            w[-1, -1] = -1
             w = to_tensor(w)
             b = torch.zeros(len(w))
 
