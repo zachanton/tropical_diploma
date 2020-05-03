@@ -229,6 +229,9 @@ class TropicalPolynomial:
                     self.monoms[tuple(x[1:])] = TropicalMonomial(x)
         elif isinstance(monoms, dict):
             self.monoms = monoms
+            
+        self.pts = None
+        self.new_simp = None
 
     def __getitem__(self, n):
         return list(self.monoms.values())[n]
@@ -390,7 +393,7 @@ class TropicalPolynomial:
         new_monom = filter_hull(pts,hull)
         return TropicalPolynomial(new_monom)
     
-    def minimize(self):
+    def minimize_depr_v2(self):
         name = 'test'
         JuPyMake.ExecuteCommand(f'${name} = toTropicalPolynomial("{self.poly_to_str()}");')
 
@@ -433,6 +436,40 @@ class TropicalPolynomial:
         
         return TropicalPolynomial([self.monoms[tuple(v)] for v in pts[used_points]])
     
+    
+    def minimize(self):
+        if self.pts is not None and self.new_simp is not None:
+            used_points = np.unique([i for j in self.new_simp for i in j])
+            new_poly = TropicalPolynomial([self.monoms[tuple(v)] for v in self.pts[used_points]])
+            new_poly.pts = self.pts
+            new_poly.new_simp = self.new_simp
+            return new_poly
+            
+        name = 'test'
+        JuPyMake.ExecuteCommand(f'${name} = toTropicalPolynomial("{self.poly_to_str()}");')
+        JuPyMake.ExecuteCommand(f'$V = new Hypersurface<Max>(POLYNOMIAL=>${name});')
+        JuPyMake.ExecuteCommand('$ds = $V->dual_subdivision();')
+        JuPyMake.ExecuteCommand('$pc = $ds->POLYHEDRAL_COMPLEX;')
+        pts = JuPyMake.ExecuteCommand('print $pc->VERTICES;')[1]
+        pts = np.array([[int(j) for j in i.split()[1:]] for i in pts.split('\n')[:-1]])
+#         simp = JuPyMake.ExecuteCommand('print $ds->POLYHEDRAL_COMPLEX->MAXIMAL_POLYTOPES;')[1]
+#         simp = np.array([[int(j) for j in i[1:-1].split()] for i in simp.split('\n')[:-1]])
+        adj = JuPyMake.ExecuteCommand('print $pc->GRAPH->ADJACENCY;')[1]
+        adj = np.array([[int(j) for j in i[1:-1].split()] for i in adj.split('\n')[:-1]])
+        
+        new_simp = []
+        for i, vv in enumerate(adj):
+            for j, v in enumerate(vv):
+                new_simp.append([i,v])                
+        
+        self.pts = pts
+        self.new_simp = new_simp
+        used_points = np.unique([i for j in self.new_simp for i in j])
+        new_poly = TropicalPolynomial([self.monoms[tuple(v)] for v in self.pts[used_points]])
+        new_poly.pts = self.pts
+        new_poly.new_simp = self.new_simp
+        return new_poly
+    
 
     def poly_to_str(self):
         def mon_to_str(monom):
@@ -442,47 +479,36 @@ class TropicalPolynomial:
         return s
 
     def plot_dual_sub(self, color='blue', name='a'):
+        if self.pts is not None and self.new_simp is not None:
+            plt.plot(self.pts[:,0], self.pts[:,1], 'o', color='black')
+            for simplex in self.new_simp:
+                plt.plot(self.pts[simplex, 0], self.pts[simplex, 1], 'k-', color=color)   
+            return
+        
         JuPyMake.ExecuteCommand(f'${name} = toTropicalPolynomial("{self.poly_to_str()}");')
 
         JuPyMake.ExecuteCommand(f'$V = new Hypersurface<Max>(POLYNOMIAL=>${name});')
         JuPyMake.ExecuteCommand('$ds = $V->dual_subdivision();')
-
-        pts = JuPyMake.ExecuteCommand('print $ds->POINTS;')[1]
+        JuPyMake.ExecuteCommand('$pc = $ds->POLYHEDRAL_COMPLEX;')
+        pts = JuPyMake.ExecuteCommand('print $pc->VERTICES;')[1]
+        
         pts = np.array([[int(j) for j in i.split()[1:]] for i in pts.split('\n')[:-1]])
 
-        plt.plot(pts[:,0], pts[:,1], 'o', color='black')
-
-        simp = JuPyMake.ExecuteCommand('print $ds->MAXIMAL_CELLS;')[1]
-        simp = np.array([[int(j) for j in i[1:-1].split()] for i in simp.split('\n')[:-1]])
-
-        adj = JuPyMake.ExecuteCommand('for (my $i=0; $i<$ds->N_MAXIMAL_CELLS; ++$i)\
-                                    {print $ds->cell($i)->GRAPH->ADJACENCY, "\t" }')[1]
-        new_adj = []
-        for i in adj.split('\t')[:-1]:
-            new_a = []
-            for j in i.split('\n')[:-1]:
-                kek = j[1:-1].split()
-                if len(kek)>0:
-                    new_a.append([int(kek[0]),int(kek[-1])])
-                else:
-                    new_a.append([])
-            new_adj.append(new_a)
+        adj = JuPyMake.ExecuteCommand('print $pc->GRAPH->ADJACENCY;')[1]
+        adj = np.array([[int(j) for j in i[1:-1].split()] for i in adj.split('\n')[:-1]])
 
         new_simp = []
-        for i, vv in enumerate(new_adj):
-            new_s = []
-
+        for i, vv in enumerate(adj):
             for j, v in enumerate(vv):
-                if len(v)>0:
-                    new_s.append([simp[i][j],simp[i][v[0]]])
-                    new_s.append([simp[i][j],simp[i][v[1]]])
-            new_simp.append(new_s)            
+                new_simp.append([i,v])            
+            
+        self.pts = pts
+        self.new_simp = new_simp
 
-        for simplex in new_simp:
-            for v in simplex:
-                plt.plot(pts[v, 0], pts[v, 1], 'k-', color=color)
-                
-                
+        plt.plot(self.pts[:,0], self.pts[:,1], 'o', color='black')
+        for simplex in self.new_simp:
+            plt.plot(self.pts[simplex, 0], self.pts[simplex, 1], 'k-', color=color) 
+        return
                 
 def merge_intervals(intervals):
     intervals.sort(key=lambda x: x[0])
@@ -749,3 +775,80 @@ def convert_polynomial_diff_to_net(poly1, poly2):
     net = nn.Sequential(*net)
 
     return net
+
+def convert_net_to_tropical(net, t = Tropical(0)):
+    
+    d = net.linears[0].in_features
+    f = [TropicalPolynomial([[0]+np.eye(d)[i].tolist()]) for i in range(d)]
+    
+    g = [TropicalPolynomial([[0]+np.zeros(d).tolist()]) for i in range(d)]
+
+
+    for l in net.linears:
+        
+        n = l.in_features
+        m = l.out_features
+        a = l.weight.data.detach().cpu().numpy()
+        a_plus = np.maximum(a,0)
+        a_minus = np.maximum(-a,0)
+        
+        if l.bias is not None:
+            b_ = l.bias.data.detach().cpu().numpy()
+        else:
+            b_ = np.zeros(m)
+        
+        new_g = []
+        new_h = []
+        new_f = []
+        
+        for i in range(m):
+            g_i = None
+            h_i = None
+            f_i = None
+            for j in range(n):
+                if g_i is None:
+                    g_i = f[j]**a_minus[i][j]
+                    g_i *= g[j]**a_plus[i][j]
+                else:
+                    g_i *= f[j]**a_minus[i][j]
+                    g_i *= g[j]**a_plus[i][j]
+                
+                if h_i is None:
+                    h_i = f[j]**a_plus[i][j]
+                    h_i *= g[j]**a_minus[i][j]
+                else:
+                    h_i *= f[j]**a_plus[i][j]
+                    h_i *= g[j]**a_minus[i][j]
+                
+            h_i *= Tropical(b_[i])
+            f_i = h_i+g_i*t
+            
+            new_g.append(g_i)
+            new_h.append(h_i)
+            new_f.append(f_i)
+        
+        f = new_f
+        g = new_g
+        h = new_h
+        
+    for j in range(len(h)):
+        hxmin, hymin = np.array(list(h[j].monoms.keys()))[:,0].min(), np.array(list(h[j].monoms.keys()))[:,1].min()
+        gxmin, gymin = np.array(list(g[j].monoms.keys()))[:,0].min(), np.array(list(g[j].monoms.keys()))[:,1].min()
+
+        xmin, ymin = min(hxmin,gxmin), min(hymin,gymin)
+
+        new_h = []
+        for v in h[j].monoms:
+            new_h.append(list(np.array([i.val for i in h[j].monoms[v].coef])- np.array([0,xmin,ymin])))
+        new_h = TropicalPolynomial(new_h)
+
+        new_g = []
+        for v in g[j].monoms:
+            new_g.append(list(np.array([i.val for i in g[j].monoms[v].coef])- np.array([0,xmin,ymin])))
+        new_g = TropicalPolynomial(new_g)
+        
+        h[j] = new_h
+        g[j] = new_g
+    
+    return h, g
+        
